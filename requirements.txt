@@ -10,3 +10,8 @@ langchain-chroma>=1.0.0
 langchain-huggingface>=0.3.0
 
 sentence-transformers>=2.7.0
+
+pdfplumber
+pytesseract
+pdf2image
+Pillow
