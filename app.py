@@ -38,7 +38,7 @@ with st.sidebar:
         shutil.rmtree(PERSIST_DIR, ignore_errors=True)
         PERSIST_DIR.mkdir(parents=True, exist_ok=True)
         st.success("Índice borrado. Ahora ingesta PDFs de nuevo.")
-        st.stop()
+        st.rerun()
 
     # Borra PDFs guardados localmente
     if st.button("🗑️ Borrar PDFs subidos"):
@@ -49,7 +49,7 @@ with st.sidebar:
                 except Exception:
                     pass
         st.success("PDFs borrados.")
-        st.stop()
+        st.rerun()
 
 uploaded = st.file_uploader(
     "Sube uno o varios PDFs",
