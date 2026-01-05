@@ -1,0 +1,12 @@
+# Python
+.venv/
+__pycache__/
+*.pyc
+
+# RAG artifacts
+storage/chroma/
+data/pdfs/
+
+# OS / IDE
+.DS_Store
+.vscode/
