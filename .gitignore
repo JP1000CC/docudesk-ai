@@ -10,3 +10,6 @@ data/pdfs/
 # OS / IDE
 .DS_Store
 .vscode/
+
+data/pdfs/
+storage/chroma/
