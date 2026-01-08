@@ -1,13 +1,24 @@
+# rag/store.py
 from pathlib import Path
+
 from langchain_chroma import Chroma
-from langchain_huggingface import HuggingFaceEmbeddings
+from langchain_ollama import OllamaEmbeddings
+
 from rag.settings import SETTINGS
 
+
 def get_embeddings():
-    return HuggingFaceEmbeddings(model_name=SETTINGS.EMBEDDING_MODEL)
+    """
+    Embeddings 100% locales (sin HuggingFace).
+    Requiere que Ollama esté corriendo y que el modelo de embeddings exista:
+      ollama pull nomic-embed-text
+    """
+    embed_model = getattr(SETTINGS, "OLLAMA_EMBED_MODEL", "nomic-embed-text")
+    return OllamaEmbeddings(model=embed_model)
+
 
 def get_vectorstore(embeddings):
-    persist_dir = Path(SETTINGS.PERSIST_DIR)
+    persist_dir = Path(SETTINGS.PERSIST_DIR).expanduser().resolve()
     persist_dir.mkdir(parents=True, exist_ok=True)
 
     # test write permission (falla rápido con mensaje claro)

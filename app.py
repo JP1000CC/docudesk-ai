@@ -137,7 +137,7 @@ with st.sidebar:
     st.subheader("Configuración")
     st.write(f"**Colección:** {SETTINGS.COLLECTION_NAME}")
     st.write(f"**Chroma dir:** `{PERSIST_DIR}`")
-    st.write(f"**Embeddings:** {SETTINGS.EMBEDDING_MODEL}")
+    st.write(f"**Embeddings:** {SETTINGS.OLLAMA_EMBED_MODEL} (Ollama)")
     st.write(f"**Ollama model:** {SETTINGS.OLLAMA_MODEL}")
 
     st.divider()
