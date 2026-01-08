@@ -6,14 +6,19 @@ class Settings:
     COLLECTION_NAME: str = "docudesk"
     PERSIST_DIR: str = "/private/tmp/docudesk-ai/chroma"
 
-    CHUNK_SIZE: int = 1000
-    CHUNK_OVERLAP: int = 150
+    CHUNK_SIZE: int = 650
+    CHUNK_OVERLAP: int = 100
 
-    OLLAMA_MODEL: str = "llama3.2:3b"
+    OLLAMA_MODEL: str = "qwen2.5:14b-instruct"
+    OLLAMA_BASE_URL: str = "http://localhost:11434"
+    OLLAMA_EMBED_MODEL: str = "mxbai-embed-large"
 
-    OLLAMA_EMBED_MODEL: str = "nomic-embed-text"
+    TOP_K: int = 12
+    FETCH_K: int = 80
+    MMR_LAMBDA: float = 0.25
+    BM25_TOP_K: int = 30
 
-    TOP_K: int = 4
+    TEMPERATURE: float = 0.0
 
     OCR_ENABLED: bool = True
     OCR_LANG: str = "spa+eng"
