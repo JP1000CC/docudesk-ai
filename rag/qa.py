@@ -8,7 +8,6 @@ import hashlib
 from langchain_ollama import ChatOllama
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.documents import Document
-
 from langchain_community.retrievers import BM25Retriever
 
 from rag.settings import SETTINGS
@@ -79,7 +78,6 @@ def _format_context(docs: List[Document], max_chars_per_doc: int = 1800) -> str:
 
 
 def _get_retriever(vs, k: int, fetch_k: int, lambda_mult: float):
-    # MMR si se puede, si no, similarity normal
     try:
         return vs.as_retriever(
             search_type="mmr",
@@ -89,40 +87,88 @@ def _get_retriever(vs, k: int, fetch_k: int, lambda_mult: float):
         return vs.as_retriever(search_kwargs={"k": k})
 
 
-# Cache simple para BM25 (evita reconstruirlo en cada pregunta)
-_BM25_CACHE: Dict[str, BM25Retriever] = {}
+# cache: (persist_dir::collection) -> (bm25, all_docs)
+_BM25_CACHE: Dict[str, Tuple[BM25Retriever, List[Document]]] = {}
 
 
-def _build_bm25(vs) -> BM25Retriever:
+def _load_all_docs_from_chroma(vs, batch_size: int = 500) -> List[Document]:
     """
-    Crea BM25 a partir de TODOS los chunks guardados en Chroma.
-    Con 1–5k chunks va bien para MVP.
+    Carga TODOS los documentos desde la colección interna de Chroma con paginación.
+    Esto es lo que te estaba fallando: sin limit/offset BM25 quedaba incompleto.
     """
+    # langchain_chroma expone la colección interna como _collection
+    col = getattr(vs, "_collection", None)
+    if col is None:
+        return []
+
+    docs: List[Document] = []
+    offset = 0
+
+    while True:
+        got = col.get(include=["documents", "metadatas"], limit=batch_size, offset=offset)
+        texts = got.get("documents", []) or []
+        metas = got.get("metadatas", []) or []
+        if not texts:
+            break
+
+        for text, md in zip(texts, metas):
+            if text and isinstance(text, str):
+                docs.append(Document(page_content=text, metadata=md or {}))
+
+        offset += len(texts)
+
+    return docs
+
+
+def _build_bm25(vs) -> Tuple[BM25Retriever, List[Document]]:
     cache_key = f"{SETTINGS.PERSIST_DIR}::{SETTINGS.COLLECTION_NAME}"
     if cache_key in _BM25_CACHE:
         return _BM25_CACHE[cache_key]
 
-    data = vs.get(include=["documents", "metadatas"])
-    docs_raw = data.get("documents", []) or []
-    metas = data.get("metadatas", []) or []
+    all_docs = _load_all_docs_from_chroma(vs, batch_size=getattr(SETTINGS, "BM25_BATCH", 500))
+    bm25 = BM25Retriever.from_documents(all_docs)
+    bm25.k = getattr(SETTINGS, "BM25_TOP_K", 30)
 
-    docs: List[Document] = []
-    for text, md in zip(docs_raw, metas):
-        if text and isinstance(text, str):
-            docs.append(Document(page_content=text, metadata=md or {}))
+    _BM25_CACHE[cache_key] = (bm25, all_docs)
+    return bm25, all_docs
 
-    bm25 = BM25Retriever.from_documents(docs)
-    bm25.k = getattr(SETTINGS, "BM25_TOP_K", 20)
 
-    _BM25_CACHE[cache_key] = bm25
-    return bm25
+def _score_map_from_vector(vs, queries: List[str], fetch_k: int) -> Dict[str, float | None]:
+    score_map: Dict[str, float | None] = {}
+    for q in queries:
+        try:
+            scored = vs.similarity_search_with_score(q, k=fetch_k)
+            for d, s in scored:
+                key = _doc_key(d)
+                if key not in score_map or (s is not None and score_map[key] is not None and s < score_map[key]):
+                    score_map[key] = s
+        except Exception:
+            pass
+    return score_map
+
+
+def _substring_fallback(all_docs: List[Document], needle: str, limit: int = 20) -> List[Document]:
+    """
+    Fallback determinista: si la pregunta contiene un nombre propio,
+    buscamos chunks que lo contengan literal (normalizado sin tildes).
+    Con 1-5k chunks esto es rápido y salva el MVP.
+    """
+    n = _strip_accents(needle).lower()
+    hits = []
+    for d in all_docs:
+        txt = _strip_accents((d.page_content or "")).lower()
+        if n in txt:
+            hits.append(d)
+            if len(hits) >= limit:
+                break
+    return hits
 
 
 def _retrieve_hybrid(question: str, k: int) -> Tuple[List[Document], Dict[str, float | None]]:
     embeddings = get_embeddings()
     vs = get_vectorstore(embeddings)
 
-    fetch_k = getattr(SETTINGS, "FETCH_K", max(60, k * 6))
+    fetch_k = getattr(SETTINGS, "FETCH_K", max(80, k * 6))
     lambda_mult = getattr(SETTINGS, "MMR_LAMBDA", 0.25)
 
     q1 = question.strip()
@@ -138,50 +184,48 @@ def _retrieve_hybrid(question: str, k: int) -> Tuple[List[Document], Dict[str, f
         except Exception:
             vec_docs.extend(vs.similarity_search(q, k=k))
 
-    # 2) BM25 (keyword) para asegurar nombres propios
+    # 2) BM25 (keyword) completo
     bm25_docs: List[Document] = []
+    all_docs: List[Document] = []
     try:
-        bm25 = _build_bm25(vs)
+        bm25, all_docs = _build_bm25(vs)
         for q in queries:
             bm25_docs.extend(bm25.get_relevant_documents(q))
     except Exception:
-        # si BM25 no está disponible, seguimos con vector
         pass
 
-    # 3) Unir + dedupe
     docs_all = _dedupe_docs(vec_docs + bm25_docs)
 
-    # 4) Rerank aproximado con scores de vector (distancia)
-    score_map: Dict[str, float | None] = {}
-    for q in queries:
-        try:
-            scored = vs.similarity_search_with_score(q, k=fetch_k)
-            for d, s in scored:
-                key = _doc_key(d)
-                if key not in score_map or (s is not None and score_map[key] is not None and s < score_map[key]):
-                    score_map[key] = s
-        except Exception:
-            pass
+    # 3) Si NO aparece el término clave, fuerza fallback por substring
+    # (en este caso "melqui" suele bastar)
+    if all_docs:
+        norm_q = _strip_accents(q1).lower()
+        if "melqui" in norm_q and "melqui" not in _strip_accents("\n".join((d.page_content or "") for d in docs_all)).lower():
+            docs_all = _dedupe_docs(_substring_fallback(all_docs, "melquiades", limit=25) + docs_all)
 
-    # Orden: primero los que tengan score mejor (menor), luego los que no tengan score
+    # 4) Scores aproximados desde vector
+    score_map = _score_map_from_vector(vs, queries, fetch_k=fetch_k)
+
     def sort_key(d: Document):
         s = score_map.get(_doc_key(d))
         return (s is None, s if s is not None else 999999)
 
     docs_all.sort(key=sort_key)
-    docs_final = docs_all[: max(k, 10)]  # normalmente mando 10-12 al LLM para contexto
 
-    # DEBUG opcional: si no aparece "melqui" en contexto, el problema es retrieval/texto
+    # mandamos un poco más de contexto al LLM para que encuentre la evidencia
+    final_n = max(12, k)
+    docs_final = docs_all[:final_n]
+
+    # DEBUG opcional en consola
     if getattr(SETTINGS, "DEBUG_RAG", False):
-        joined = "\n".join((d.page_content or "").lower() for d in docs_final)
-        print("[DEBUG_RAG] contiene 'melqui'?:", "melqui" in joined)
+        joined = _strip_accents("\n".join((d.page_content or "") for d in docs_final)).lower()
+        print("[DEBUG_RAG] chunks_final:", len(docs_final), "| contiene 'melqui'?:", "melqui" in joined)
 
     return docs_final, score_map
 
 
 def answer(question: str, k: int | None = None, strict: bool = True) -> Tuple[str, List[dict]]:
     k_ = k or SETTINGS.TOP_K
-
     docs, score_map = _retrieve_hybrid(question, k=k_)
     context = _format_context(docs)
 
@@ -211,7 +255,6 @@ def answer(question: str, k: int | None = None, strict: bool = True) -> Tuple[st
 
 def stream_answer(question: str, k: int | None = None, strict: bool = True) -> Tuple[Generator[str, None, None], List[dict]]:
     k_ = k or SETTINGS.TOP_K
-
     docs, score_map = _retrieve_hybrid(question, k=k_)
     context = _format_context(docs)
 

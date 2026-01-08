@@ -14,9 +14,10 @@ class Settings:
     OLLAMA_EMBED_MODEL: str = "mxbai-embed-large"
 
     TOP_K: int = 12
-    FETCH_K: int = 80
+    FETCH_K: int = 120
     MMR_LAMBDA: float = 0.25
-    BM25_TOP_K: int = 30
+    BM25_TOP_K: int = 40
+    BM25_BATCH: int = 500
 
     TEMPERATURE: float = 0.0
 
@@ -24,5 +25,7 @@ class Settings:
     OCR_LANG: str = "spa+eng"
     OCR_DPI: int = 250
     OCR_MIN_TEXT_CHARS: int = 40
+
+    DEBUG_RAG: bool = True
 
 SETTINGS = Settings()
