@@ -96,7 +96,6 @@ def _load_all_docs_from_chroma(vs, batch_size: int = 500) -> List[Document]:
     Carga TODOS los documentos desde la colección interna de Chroma con paginación.
     Esto es lo que te estaba fallando: sin limit/offset BM25 quedaba incompleto.
     """
-    # langchain_chroma expone la colección interna como _collection
     col = getattr(vs, "_collection", None)
     if col is None:
         return []
@@ -184,7 +183,7 @@ def _retrieve_hybrid(question: str, k: int) -> Tuple[List[Document], Dict[str, f
         except Exception:
             vec_docs.extend(vs.similarity_search(q, k=k))
 
-        # 2) BM25 (keyword) completo
+    # 2) BM25 (keyword) completo
     bm25_docs: List[Document] = []
     all_docs: List[Document] = []
     try:
@@ -198,7 +197,6 @@ def _retrieve_hybrid(question: str, k: int) -> Tuple[List[Document], Dict[str, f
     docs_all = _dedupe_docs(vec_docs + bm25_docs)
 
     # 4) SEED determinista por substring cuando hay entidad clara (ej: Melquíades)
-    # Esto GARANTIZA que el contexto incluya fragmentos donde aparece el nombre.
     q_norm = _strip_accents(q1).lower()
     if all_docs and ("melqui" in q_norm):
         seed_n = getattr(SETTINGS, "ENTITY_SEED_TOP", 40)
@@ -216,15 +214,6 @@ def _retrieve_hybrid(question: str, k: int) -> Tuple[List[Document], Dict[str, f
 
     final_n = max(16, k)  # manda más contexto al LLM
     docs_final = docs_all[:final_n]
-
-    # DEBUG: confirma que el contexto final trae 'melqui'
-    if getattr(SETTINGS, "DEBUG_RAG", False):
-        joined = _strip_accents("\n".join((d.page_content or "") for d in docs_final)).lower()
-        print("[DEBUG_RAG] final_docs:", len(docs_final), "| contiene 'melqui'?:", "melqui" in joined)
-        # imprime primeras 5 fuentes para ver si son las correctas
-        for d in docs_final[:5]:
-            m = _doc_source_meta(d)
-            print("  -", m["filename"], "p.", m["page"], "ocr=", m["ocr"])
 
     return docs_final, score_map
 
